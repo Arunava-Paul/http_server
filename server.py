@@ -3,7 +3,7 @@ import socket
 import threading
 
 CHUNK_SIZE = 4096
-IPC_HOST = '192.168.0.103'
+IPC_HOST = '127.0.0.1'
 IPC_PORT = 5000
 
 # Store state for each transaction: {trx_id: {"last_chunk": ..., "awaiting_ack": bool}}
