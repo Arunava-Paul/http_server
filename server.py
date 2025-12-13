@@ -98,7 +98,7 @@ if __name__ == "__main__":
     bind_addr = "0.0.0.0"
     server = ThreadingHTTPServer((bind_addr, 8888), SimpleHandler)
     print(f"HTTP server started on {bind_addr}:8888 (use your device IP to access)")
-     try:
+    try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
