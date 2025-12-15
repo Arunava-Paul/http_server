@@ -6,9 +6,10 @@ CHUNK_SIZE = 4096
 IPC_HOST = '127.0.0.1'
 IPC_PORT = 5000
 
-# Store state for each transaction: {trx_id: {"last_chunk": ..., "awaiting_ack": bool}}
+# { trx_id : { "last_chunk": bytes, "awaiting_ack": bool } }
 active_transactions = {}
 transactions_lock = threading.Lock()
+
 
 def get_chunk_from_filehandler():
     with socket.create_connection((IPC_HOST, IPC_PORT), timeout=5) as sock:
@@ -18,90 +19,106 @@ def get_chunk_from_filehandler():
             return None
         return chunk
 
+
 class SimpleHandler(BaseHTTPRequestHandler):
+
+    # -------------------- GET --------------------
     def do_GET(self):
+        print(f"GET from {self.client_address} path={self.path}", flush=True)
+
         trx_id = self.path.lstrip("/")
         if not trx_id:
-            self.send_error(400, "Missing transaction ID in URL")
+            self.send_error(400, "Missing transaction ID")
             return
 
         with transactions_lock:
             session = active_transactions.get(trx_id)
+
             if session is None:
-                # Only one active session at a time.
                 if active_transactions:
-                    self.send_error(403, "Another transaction active. Only one allowed at a time.")
+                    self.send_error(403, "Another transaction active")
                     return
+
                 chunk = get_chunk_from_filehandler()
                 if chunk is None:
-                    self.send_error(404, f"No more data for transaction ID: {trx_id}")
+                    self.send_error(404, "No more data")
                     return
+
                 active_transactions[trx_id] = {
                     "last_chunk": chunk,
                     "awaiting_ack": True
                 }
-                print(f"{trx_id} INIT: sending first chunk, awaiting ACK.")
+                print(f"{trx_id}: INIT -> sending first chunk")
+
             else:
                 if session["awaiting_ack"]:
-                    # Still waiting on ACK for last chunk; resend it.
                     chunk = session["last_chunk"]
-                    print(f"{trx_id} REPEAT: still awaiting ACK, resending same chunk.")
+                    print(f"{trx_id}: REPEAT -> resending last chunk")
                 else:
-                    # ACK received, send next chunk.
                     chunk = get_chunk_from_filehandler()
                     if chunk is None:
-                        self.send_error(404, f"No more data for transaction ID: {trx_id}")
                         del active_transactions[trx_id]
-                        print(f"{trx_id}: no more data, transaction removed.")
+                        self.send_error(404, "No more data")
                         return
+
                     session["last_chunk"] = chunk
                     session["awaiting_ack"] = True
-                    print(f"{trx_id} ACK'd: sending next chunk, awaiting ACK.")
+                    print(f"{trx_id}: ACK'd -> sending next chunk")
 
+        # ---- HTTP response (Zephyr safe) ----
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(chunk)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(chunk)
 
+    # -------------------- PUT (ACK) --------------------
     def do_PUT(self):
+        print(f"PUT from {self.client_address} path={self.path}", flush=True)
+
         trx_id = self.path.lstrip("/")
         if not trx_id:
-            self.send_error(400, "Missing transaction ID in URL")
+            self.send_error(400, "Missing transaction ID")
             return
 
         with transactions_lock:
             session = active_transactions.get(trx_id)
             if not session:
-                self.send_error(403, f"Transaction ID {trx_id} not active or not recognized.")
+                self.send_error(403, "Transaction not active")
                 return
+
             if not session["awaiting_ack"]:
-                # Already acked!
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain")
+                # Duplicate ACK
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
                 self.end_headers()
-                self.wfile.write(b"Already acknowledged.")
-                print(f"{trx_id}: duplicate ACK received.")
+                print(f"{trx_id}: duplicate ACK")
                 return
+
             session["awaiting_ack"] = False
-            print(f"{trx_id}: ACK received, ready for next GET.")
+            print(f"{trx_id}: ACK received")
 
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        # ---- HTTP response (NO BODY) ----
+        self.send_response(204)          # No Content
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(b"ACK accepted.")
 
+    # Silence default logging
     def log_message(self, format, *args):
-        pass  # Silence default logging
+        print(f"[{self.client_address[0]}:{self.client_address[1]}] {format % args}",
+              flush=True)
+
 
 if __name__ == "__main__":
-     # Bind to all interfaces to avoid 'cannot assign requested address'
-    bind_addr = "0.0.0.0"
-    server = ThreadingHTTPServer((bind_addr, 8888), SimpleHandler)
-    print(f"HTTP server started on {bind_addr}:8888 (use your device IP to access)")
+    server = ThreadingHTTPServer(("0.0.0.0", 8888), SimpleHandler)
+    print("HTTP server started on 0.0.0.0:8888")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
-        print("HTTP server stopped.")
+        print("HTTP server stopped")
