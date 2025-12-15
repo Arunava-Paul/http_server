@@ -72,6 +72,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(chunk)
+        self.wfile.flush()
 
     # -------------------- PUT (ACK) --------------------
     def do_PUT(self):
@@ -105,6 +106,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.send_header("Connection", "close")
         self.end_headers()
+        self.wfile.flush()
 
     # Silence default logging
     def log_message(self, format, *args):
