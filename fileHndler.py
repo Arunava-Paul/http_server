@@ -13,7 +13,7 @@ class FileHdlr:
     def __init__(self, filePath):
         self._path = filePath
         self._f = open(filePath, 'rb')
-        self._block_no = 1
+        self._block_no = 0
 
     def readChunk(self):
         payload = self._f.read(PAYLOAD_SIZE)
