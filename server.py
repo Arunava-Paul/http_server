@@ -28,7 +28,7 @@ class HTTPServerV4(HTTPServer):
 
 class RequestHandler(SimpleHTTPRequestHandler):
     length = 0
-    
+    protocol_version = "HTTP/1.0" 
     def do_GET(self):
         print(f"GET from {self.client_address} path={self.path}", flush=True)
 
@@ -42,11 +42,13 @@ class RequestHandler(SimpleHTTPRequestHandler):
             if session is None:
                 if active_transactions:
                     self.send_error(403, "Another transaction active")
+                    self.close_connection = True
                     return
 
                 chunk = get_chunk_from_filehandler()
                 if chunk is None:
                     self.send_error(404, "No more data")
+                    self.close_connection = True
                     return
 
                 active_transactions[trx_id] = {
@@ -64,6 +66,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     if chunk is None:
                         del active_transactions[trx_id]
                         self.send_error(404, "No more data")
+                        self.close_connection = True
                         return
 
                     session["last_chunk"] = chunk
@@ -73,8 +76,10 @@ class RequestHandler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(chunk)))
+        self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(chunk)   
+        self.wfile.write(chunk) 
+        self.close_connection = True        
         
     def do_PUT(self):
         print(f"PUT from {self.client_address} path={self.path}", flush=True)
@@ -88,6 +93,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
             session = active_transactions.get(trx_id)
             if not session:
                 self.send_error(403, "Transaction not active")
+                self.close_connection = True
                 return
 
             if not session["awaiting_ack"]:
@@ -107,11 +113,13 @@ class RequestHandler(SimpleHTTPRequestHandler):
         self.length = len(payload)
         self._set_headers()
         self.wfile.write(payload)
+        self.close_connection = True
         
     def _set_headers(self):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.send_header('Content-Length', str(self.length))
+        self.send_header("Connection", "close")
         self.end_headers()
 
     def do_POST(self):
