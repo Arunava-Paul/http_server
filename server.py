@@ -1,15 +1,18 @@
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+#!/usr/bin/python
+
 import socket
+from http.server import HTTPServer
+from http.server import SimpleHTTPRequestHandler
 import threading
 
 CHUNK_SIZE = 4096
 IPC_HOST = '127.0.0.1'
 IPC_PORT = 5000
+PORT = 8888
 
 # { trx_id : { "last_chunk": bytes, "awaiting_ack": bool } }
 active_transactions = {}
 transactions_lock = threading.Lock()
-
 
 def get_chunk_from_filehandler():
     with socket.create_connection((IPC_HOST, IPC_PORT), timeout=5) as sock:
@@ -20,9 +23,12 @@ def get_chunk_from_filehandler():
         return chunk
 
 
-class SimpleHandler(BaseHTTPRequestHandler):
+class HTTPServerV4(HTTPServer):
+    address_family = socket.AF_INET
 
-    # -------------------- GET --------------------
+class RequestHandler(SimpleHTTPRequestHandler):
+    length = 0
+    
     def do_GET(self):
         print(f"GET from {self.client_address} path={self.path}", flush=True)
 
@@ -30,7 +36,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
         if not trx_id:
             self.send_error(400, "Missing transaction ID")
             return
-
         with transactions_lock:
             session = active_transactions.get(trx_id)
 
@@ -64,17 +69,13 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     session["last_chunk"] = chunk
                     session["awaiting_ack"] = True
                     print(f"{trx_id}: ACK'd -> sending next chunk")
-
-        # ---- HTTP response (Zephyr safe) ----
+            
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(chunk)))
-        self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(chunk)
-        self.wfile.flush()
-
-    # -------------------- PUT (ACK) --------------------
+        self.wfile.write(chunk)   
+        
     def do_PUT(self):
         print(f"PUT from {self.client_address} path={self.path}", flush=True)
 
@@ -91,10 +92,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
             if not session["awaiting_ack"]:
                 # Duplicate ACK
-                self.send_response(204)
-                self.send_header("Content-Length", "0")
-                self.send_header("Connection", "close")
-                self.end_headers()
+                self._put_response()
                 print(f"{trx_id}: duplicate ACK")
                 return
 
@@ -102,25 +100,36 @@ class SimpleHandler(BaseHTTPRequestHandler):
             print(f"{trx_id}: ACK received")
 
         # ---- HTTP response (NO BODY) ----
-        self.send_response(204)          # No Content
-        self.send_header("Content-Length", "0")
-        self.send_header("Connection", "close")
+        self._put_response()
+    
+    def _put_response(self):
+        payload = b"<html><p>Done</p></html>"
+        self.length = len(payload)
+        self._set_headers()
+        self.wfile.write(payload)
+        
+    def _set_headers(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.send_header('Content-Length', str(self.length))
         self.end_headers()
-        self.wfile.flush()
 
-    # Silence default logging
-    def log_message(self, format, *args):
-        print(f"[{self.client_address[0]}:{self.client_address[1]}] {format % args}",
-              flush=True)
+    def do_POST(self):
+        payload = b"<html><p>Done</p></html>"
+        self.length = len(payload)
+        self._set_headers()
+        self.wfile.write(payload)
 
-
-if __name__ == "__main__":
-    server = ThreadingHTTPServer(("0.0.0.0", 8888), SimpleHandler)
-    print("HTTP server started on 0.0.0.0:8888")
+def main():
+    httpd = HTTPServerV4(("0.0.0.0", PORT), RequestHandler)
+    print("Serving at port", PORT)
     try:
-        server.serve_forever()
+        httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        httpd.server_close()
         print("HTTP server stopped")
+
+if __name__ == '__main__':
+    main()
