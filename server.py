@@ -28,7 +28,6 @@ class HTTPServerV4(HTTPServer):
 
 class RequestHandler(SimpleHTTPRequestHandler):
     length = 0
-    protocol_version = "HTTP/1.0" 
     def do_GET(self):
         print(f"GET from {self.client_address} path={self.path}", flush=True)
 
