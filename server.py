@@ -7,7 +7,7 @@ from http.server import SimpleHTTPRequestHandler
 PORT = 8000
 
 class HTTPServerV6(HTTPServer):
-    address_family = socket.AF_INET6
+    address_family = socket.AF_INET
 
 class RequestHandler(SimpleHTTPRequestHandler):
     length = 0
