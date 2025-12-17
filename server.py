@@ -1,9 +1,7 @@
 #!/usr/bin/python
 
 import socket
-from http.server import ThreadingHTTPServer
-from http.server import SimpleHTTPRequestHandler
-import threading
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 CHUNK_SIZE = 4096
 IPC_HOST = '127.0.0.1'
@@ -12,7 +10,7 @@ PORT = 8888
 
 # { trx_id : { "last_chunk": bytes, "awaiting_ack": bool } }
 active_transactions = {}
-transactions_lock = threading.Lock()
+
 
 def get_chunk_from_filehandler():
     with socket.create_connection((IPC_HOST, IPC_PORT), timeout=5) as sock:
@@ -26,8 +24,10 @@ def get_chunk_from_filehandler():
 class HTTPServerV4(ThreadingHTTPServer):
     address_family = socket.AF_INET
 
+
 class RequestHandler(SimpleHTTPRequestHandler):
-    length = 0
+
+    # ---------------- GET = DATA ----------------
     def do_GET(self):
         print(f"GET from {self.client_address} path={self.path}", flush=True)
 
@@ -35,50 +35,52 @@ class RequestHandler(SimpleHTTPRequestHandler):
         if not trx_id:
             self.send_error(400, "Missing transaction ID")
             return
-        with transactions_lock:
-            session = active_transactions.get(trx_id)
 
-            if session is None:
-                if active_transactions:
-                    self.send_error(403, "Another transaction active")
-                    
-                    return
+        session = active_transactions.get(trx_id)
 
+        # ---- New transaction ----
+        if session is None:
+            if active_transactions:
+                self.send_error(403, "Another transaction active")
+                return
+
+            chunk = get_chunk_from_filehandler()
+            if chunk is None:
+                self.send_error(404, "No more data")
+                return
+
+            active_transactions[trx_id] = {
+                "last_chunk": chunk,
+                "awaiting_ack": True
+            }
+            print(f"{trx_id}: INIT -> sending first chunk")
+
+        # ---- Existing transaction ----
+        else:
+            if session["awaiting_ack"]:
+                chunk = session["last_chunk"]
+                print(f"{trx_id}: REPEAT -> resending last chunk")
+            else:
                 chunk = get_chunk_from_filehandler()
                 if chunk is None:
+                    del active_transactions[trx_id]
                     self.send_error(404, "No more data")
-                    
                     return
 
-                active_transactions[trx_id] = {
-                    "last_chunk": chunk,
-                    "awaiting_ack": True
-                }
-                print(f"{trx_id}: INIT -> sending first chunk")
+                session["last_chunk"] = chunk
+                session["awaiting_ack"] = True
+                print(f"{trx_id}: ACK'd -> sending next chunk")
 
-            else:
-                if session["awaiting_ack"]:
-                    chunk = session["last_chunk"]
-                    print(f"{trx_id}: REPEAT -> resending last chunk")
-                else:
-                    chunk = get_chunk_from_filehandler()
-                    if chunk is None:
-                        del active_transactions[trx_id]
-                        self.send_error(404, "No more data")
-                        
-                        return
-
-                    session["last_chunk"] = chunk
-                    session["awaiting_ack"] = True
-                    print(f"{trx_id}: ACK'd -> sending next chunk")
-            
+        # ---- HTTP response ----
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(chunk)))
+        self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(chunk) 
-                
-        
+        self.wfile.write(chunk)
+        self.wfile.flush()
+
+    # ---------------- PUT = ACK ----------------
     def do_PUT(self):
         print(f"PUT from {self.client_address} path={self.path}", flush=True)
 
@@ -87,43 +89,33 @@ class RequestHandler(SimpleHTTPRequestHandler):
             self.send_error(400, "Missing transaction ID")
             return
 
-        with transactions_lock:
-            session = active_transactions.get(trx_id)
-            if not session:
-                self.send_error(403, "Transaction not active")
-                
-                return
+        session = active_transactions.get(trx_id)
+        if not session:
+            self.send_error(403, "Transaction not active")
+            return
 
-            if not session["awaiting_ack"]:
-                # Duplicate ACK
-                self._put_response()
-                print(f"{trx_id}: duplicate ACK")
-                return
+        if not session["awaiting_ack"]:
+            # Duplicate ACK
+            print(f"{trx_id}: duplicate ACK")
+            self._put_response()
+            return
 
-            session["awaiting_ack"] = False
-            print(f"{trx_id}: ACK received")
+        session["awaiting_ack"] = False
+        print(f"{trx_id}: ACK received")
 
-        # ---- HTTP response (NO BODY) ----
         self._put_response()
-    
+
+    # ---------------- Helpers ----------------
     def _put_response(self):
         payload = b"<html><p>Done</p></html>"
-        self.length = len(payload)
-        self._set_headers()
-        self.wfile.write(payload)
-        
-        
-    def _set_headers(self):
         self.send_response(200)
-        self.send_header('Content-Type', 'text/html')
-        self.send_header('Content-Length', str(self.length))
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Connection", "close")
         self.end_headers()
-
-    def do_POST(self):
-        payload = b"<html><p>Done</p></html>"
-        self.length = len(payload)
-        self._set_headers()
         self.wfile.write(payload)
+        self.wfile.flush()
+
 
 def main():
     httpd = HTTPServerV4(("0.0.0.0", PORT), RequestHandler)
@@ -135,6 +127,7 @@ def main():
     finally:
         httpd.server_close()
         print("HTTP server stopped")
+
 
 if __name__ == '__main__':
     main()
