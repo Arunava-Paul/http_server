@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import socket
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 CHUNK_SIZE = 4096
 IPC_HOST = '127.0.0.1'
@@ -16,7 +16,9 @@ def get_chunk_from_filehandler():
     with socket.create_connection((IPC_HOST, IPC_PORT), timeout=5) as sock:
         sock.sendall(b"send")
         chunk = sock.recv(CHUNK_SIZE)
-        if chunk == b"EOF":
+        if not chunk:
+            return None
+        else if chunk == b"EOF":
             return None
         return chunk
 
@@ -25,7 +27,7 @@ class HTTPServerV4(ThreadingHTTPServer):
     address_family = socket.AF_INET
 
 
-class RequestHandler(SimpleHTTPRequestHandler):
+class RequestHandler(BaseHTTPRequestHandler):
 
     # ---------------- GET = DATA ----------------
     def do_GET(self):
@@ -74,6 +76,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
         # ---- HTTP response ----
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
+        print(f"DEBUG: chunk len = {len(chunk)}", flush=True)
         self.send_header("Content-Length", str(len(chunk)))
         self.send_header("Connection", "close")
         self.end_headers()
