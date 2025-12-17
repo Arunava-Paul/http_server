@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import socket
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 CHUNK_SIZE = 4096
 IPC_HOST = '127.0.0.1'
@@ -23,7 +23,7 @@ def get_chunk_from_filehandler():
         return chunk
 
 
-class HTTPServerV4(ThreadingHTTPServer):
+class HTTPServerV4(HTTPServer):
     address_family = socket.AF_INET
 
 
