@@ -82,6 +82,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(chunk)
         self.wfile.flush()
+        self.close_connection = True
 
     # ---------------- PUT = ACK ----------------
     def do_PUT(self):
@@ -118,6 +119,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
         self.wfile.flush()
+        self.close_connection = True
 
 
 def main():
