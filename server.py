@@ -18,7 +18,7 @@ def get_chunk_from_filehandler():
         chunk = sock.recv(CHUNK_SIZE)
         if not chunk:
             return None
-        else if chunk == b"EOF":
+        elif chunk == b"EOF":
             return None
         return chunk
 
